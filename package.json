@@ -1,7 +1,7 @@
 {
   "name": "apprise-mcp",
   "version": "1.0.0",
-  "description": "Remote MCP server for Apprise universal notification platform",
+  "description": "Remote MCP server for Apprise-compatible notifications - fully serverless",
   "license": "MIT",
   "scripts": {
     "dev": "next dev",
@@ -13,10 +13,12 @@
     "@modelcontextprotocol/sdk": "^1.25.2",
     "mcp-handler": "^1.0.7",
     "next": "^15.0.0",
+    "nodemailer": "^6.9.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/nodemailer": "^6.4.0",
     "@types/react": "19.2.14",
     "typescript": "^5.0.0"
   }
