@@ -1,9 +1,15 @@
 /**
- * Notification dispatcher — parses Apprise URLs and sends to all targets.
+ * Notification dispatcher — detects service from URL and sends.
+ * Accepts both raw webhook URLs and Apprise-style URLs.
  */
 
 import { parseAppriseUrls } from "./parser";
-import { sendToService, type NotifyOptions, type NotifyResult } from "./services";
+import {
+  sendToService,
+  sendToWebhookUrl,
+  type NotifyOptions,
+  type NotifyResult,
+} from "./services";
 
 export interface DispatchResult {
   sent: number;
@@ -11,21 +17,51 @@ export interface DispatchResult {
   results: NotifyResult[];
 }
 
+/**
+ * Detect if a URL is a raw webhook URL (https://...) or an Apprise-scheme URL.
+ * Raw webhook URLs are auto-detected by hostname.
+ */
+function isRawUrl(url: string): boolean {
+  return url.startsWith("http://") || url.startsWith("https://");
+}
+
 export async function dispatch(
   urls: string,
   opts: NotifyOptions
 ): Promise<DispatchResult> {
-  const services = parseAppriseUrls(urls);
+  const urlList = urls
+    .split(/[,\s]+/)
+    .map((u) => u.trim())
+    .filter(Boolean);
 
-  if (services.length === 0) {
+  if (urlList.length === 0) {
     return { sent: 0, failed: 0, results: [] };
   }
 
-  // Send to all services in parallel
-  const results = await Promise.all(
-    services.map((svc) => sendToService(svc, opts))
+  const rawUrls = urlList.filter(isRawUrl);
+  const appriseUrls = urlList.filter((u) => !isRawUrl(u));
+
+  // Send to raw webhook URLs (auto-detect service)
+  const rawResults = await Promise.all(
+    rawUrls.map((url) => sendToWebhookUrl(url, opts))
   );
 
+  // Send to Apprise-scheme URLs
+  let appriseResults: NotifyResult[] = [];
+  if (appriseUrls.length > 0) {
+    try {
+      const services = parseAppriseUrls(appriseUrls.join(","));
+      appriseResults = await Promise.all(
+        services.map((svc) => sendToService(svc, opts))
+      );
+    } catch (err) {
+      appriseResults = [
+        { service: "apprise", success: false, detail: String(err) },
+      ];
+    }
+  }
+
+  const results = [...rawResults, ...appriseResults];
   const sent = results.filter((r) => r.success).length;
   const failed = results.filter((r) => !r.success).length;
 
@@ -33,70 +69,92 @@ export async function dispatch(
 }
 
 /**
- * List of natively supported services with their URL format.
+ * List of supported services with setup instructions.
  */
 export const SUPPORTED_SERVICES = [
   {
     name: "Slack",
-    scheme: "slack",
-    format: "slack://TokenA/TokenB/TokenC/#channel",
-    description:
-      "Send via Slack incoming webhook. Get tokens from https://api.slack.com/messaging/webhooks",
+    accepts: "Raw webhook URL or slack://TokenA/TokenB/TokenC",
+    setup: [
+      "1. Go to https://api.slack.com/apps and create an app (or use existing)",
+      "2. Enable 'Incoming Webhooks' in the app settings",
+      "3. Click 'Add New Webhook to Workspace' and select a channel",
+      "4. Copy the webhook URL (looks like https://hooks.slack.com/services/T.../B.../xxx)",
+      "5. Paste the full URL into send_notification",
+    ],
   },
   {
     name: "Discord",
-    scheme: "discord",
-    format: "discord://WebhookID/WebhookToken",
-    description:
-      "Send via Discord webhook. Create one in Server Settings > Integrations > Webhooks",
-  },
-  {
-    name: "Telegram",
-    scheme: "tgram",
-    format: "tgram://BotToken/ChatID",
-    description:
-      "Send via Telegram Bot API. Create a bot with @BotFather, get chat ID from @userinfobot",
+    accepts: "Raw webhook URL or discord://WebhookID/WebhookToken",
+    setup: [
+      "1. Open Discord and go to the channel you want notifications in",
+      "2. Click the gear icon (Edit Channel) > Integrations > Webhooks",
+      "3. Click 'New Webhook', name it, then click 'Copy Webhook URL'",
+      "4. Paste the full URL (looks like https://discord.com/api/webhooks/123/abc)",
+    ],
   },
   {
     name: "Microsoft Teams",
-    scheme: "msteams",
-    format: "msteams://TokenA/TokenB/TokenC/TokenD",
-    description:
-      "Send via MS Teams incoming webhook connector",
+    accepts: "Raw workflow webhook URL",
+    setup: [
+      "1. In Teams, go to the channel where you want notifications",
+      "2. Click '...' > Workflows > 'Post to a channel when a webhook request is received'",
+      "3. Name the workflow and select the channel",
+      "4. Copy the webhook URL provided",
+      "5. Paste the full URL into send_notification",
+      "",
+      "Note: The old 'Incoming Webhook' connector is deprecated.",
+      "Use Power Automate / Workflows instead.",
+    ],
+  },
+  {
+    name: "Telegram",
+    accepts: "tgram://BotToken/ChatID",
+    setup: [
+      "1. Message @BotFather on Telegram and send /newbot",
+      "2. Follow prompts to name your bot — you'll receive a Bot Token",
+      "3. Message @userinfobot to get your Chat ID (or use group chat ID)",
+      "4. Use: tgram://YOUR_BOT_TOKEN/YOUR_CHAT_ID",
+    ],
   },
   {
     name: "Pushover",
-    scheme: "pover",
-    format: "pover://UserKey@AppToken",
-    description:
-      "Send via Pushover. Get keys from https://pushover.net/",
+    accepts: "pover://UserKey@AppToken",
+    setup: [
+      "1. Sign up at https://pushover.net/",
+      "2. Your User Key is shown on the dashboard",
+      "3. Create an Application to get an App Token",
+      "4. Use: pover://YOUR_USER_KEY@YOUR_APP_TOKEN",
+    ],
   },
   {
     name: "Ntfy",
-    scheme: "ntfy / ntfys",
-    format: "ntfy://Topic or ntfys://user:pass@host/Topic",
-    description:
-      "Send via ntfy.sh (or self-hosted ntfy). ntfys:// uses HTTPS",
+    accepts: "Raw ntfy URL or ntfy://Topic",
+    setup: [
+      "1. Pick a topic name (e.g. 'my-alerts')",
+      "2. Subscribe on your phone: install ntfy app and subscribe to the topic",
+      "3. Use: ntfy://my-alerts (sends to ntfy.sh)",
+      "4. Or use full URL: https://ntfy.sh/my-alerts",
+      "5. For self-hosted: ntfys://user:pass@your-server.com/topic",
+    ],
   },
   {
-    name: "JSON Webhook",
-    scheme: "json / jsons",
-    format: "json://host/path or jsons://host/path",
-    description:
-      "POST JSON payload to any URL. jsons:// uses HTTPS",
-  },
-  {
-    name: "Form Webhook",
-    scheme: "form / forms",
-    format: "form://host/path or forms://host/path",
-    description:
-      "POST form-encoded payload to any URL. forms:// uses HTTPS",
+    name: "Generic Webhook",
+    accepts: "Any https:// URL",
+    setup: [
+      "Any URL that accepts POST requests will work.",
+      "JSON payload: { title, body, type, format }",
+      "Or use Apprise format: json://host/path, form://host/path",
+    ],
   },
   {
     name: "Email",
-    scheme: "mailto / mailtos",
-    format: "mailtos://user:pass@smtp-host/to@example.com",
-    description:
-      "Send email via SMTP. mailtos:// uses TLS. Uses nodemailer",
+    accepts: "mailtos://user:pass@smtp-host/to@example.com",
+    setup: [
+      "1. You need SMTP credentials (e.g. Gmail app password, SendGrid, etc.)",
+      "2. For Gmail: enable 2FA, create an App Password at https://myaccount.google.com/apppasswords",
+      "3. Use: mailtos://you%40gmail.com:app-password@smtp.gmail.com/recipient@example.com",
+      "4. URL-encode the @ in your email as %40",
+    ],
   },
 ];

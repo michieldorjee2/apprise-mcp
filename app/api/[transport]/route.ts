@@ -10,12 +10,12 @@ const handler = createMcpHandler(
       {
         title: "Send Notification",
         description:
-          "Send a notification to one or more services using Apprise-compatible URL(s). Supports Slack, Discord, Telegram, MS Teams, Pushover, Ntfy, JSON/Form webhooks, and Email. Use list_services to discover supported URL formats.",
+          "Send a notification to one or more services. Accepts raw webhook URLs (just paste the URL you copied from Slack, Discord, Teams, etc.) or Apprise-style URLs. Use list_services to see setup instructions for each service.",
         inputSchema: {
           urls: z
             .string()
             .describe(
-              "Comma-separated Apprise URL(s). Examples: 'slack://TokenA/TokenB/TokenC', 'discord://WebhookID/WebhookToken', 'tgram://BotToken/ChatID', 'ntfy://mytopic'."
+              "One or more webhook URLs, comma-separated. Accepts raw URLs: 'https://hooks.slack.com/services/...', 'https://discord.com/api/webhooks/...', Teams workflow URLs, 'https://ntfy.sh/mytopic'. Also accepts Apprise-style: 'tgram://BotToken/ChatID', 'pover://UserKey@Token'."
             ),
           body: z.string().describe("The notification message body."),
           title: z
@@ -69,7 +69,7 @@ const handler = createMcpHandler(
       {
         title: "List Services",
         description:
-          "List all supported notification services with their URL format and setup instructions.",
+          "List all supported notification services with their URL format and step-by-step setup instructions.",
         inputSchema: {},
       },
       async () => {

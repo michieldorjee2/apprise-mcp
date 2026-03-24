@@ -18,6 +18,157 @@ export interface NotifyResult {
   detail?: string;
 }
 
+/**
+ * Send to a raw webhook URL (https://...).
+ * Auto-detects the service from the hostname and sends in the appropriate format.
+ */
+export async function sendToWebhookUrl(
+  rawUrl: string,
+  opts: NotifyOptions
+): Promise<NotifyResult> {
+  try {
+    const url = new URL(rawUrl);
+    const host = url.hostname.toLowerCase();
+
+    // Slack
+    if (host === "hooks.slack.com") {
+      const payload: Record<string, unknown> = { text: formatMessage(opts) };
+      const res = await fetch(rawUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return {
+        service: "slack",
+        success: res.ok,
+        detail: res.ok ? "Sent" : `HTTP ${res.status}: ${await res.text()}`,
+      };
+    }
+
+    // Discord
+    if (host === "discord.com" || host === "discordapp.com") {
+      const payload: Record<string, unknown> = {};
+      if (opts.title) {
+        payload.embeds = [
+          {
+            title: opts.title,
+            description: opts.body,
+            color: typeToColor(opts.type),
+          },
+        ];
+      } else {
+        payload.content = opts.body;
+      }
+      const res = await fetch(rawUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return {
+        service: "discord",
+        success: res.ok || res.status === 204,
+        detail: res.ok || res.status === 204 ? "Sent" : `HTTP ${res.status}: ${await res.text()}`,
+      };
+    }
+
+    // Microsoft Teams (Power Automate workflow webhooks)
+    if (
+      host.includes(".webhook.office.com") ||
+      host.includes(".logic.azure.com") ||
+      host.includes("prod-") // Power Automate URLs like prod-XX.westus.logic.azure.com
+    ) {
+      const payload = {
+        type: "message",
+        attachments: [
+          {
+            contentType: "application/vnd.microsoft.card.adaptive",
+            content: {
+              $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+              type: "AdaptiveCard",
+              version: "1.4",
+              body: [
+                ...(opts.title
+                  ? [
+                      {
+                        type: "TextBlock",
+                        text: opts.title,
+                        weight: "Bolder",
+                        size: "Medium",
+                      },
+                    ]
+                  : []),
+                {
+                  type: "TextBlock",
+                  text: opts.body,
+                  wrap: true,
+                },
+              ],
+            },
+          },
+        ],
+      };
+      const res = await fetch(rawUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return {
+        service: "msteams",
+        success: res.ok || res.status === 202,
+        detail:
+          res.ok || res.status === 202
+            ? "Sent"
+            : `HTTP ${res.status}: ${await res.text()}`,
+      };
+    }
+
+    // Ntfy
+    if (host === "ntfy.sh" || host.includes("ntfy")) {
+      const headers: Record<string, string> = {};
+      if (opts.title) headers["X-Title"] = opts.title;
+      if (opts.type) {
+        const tagMap: Record<string, string> = {
+          info: "information_source",
+          success: "white_check_mark",
+          warning: "warning",
+          failure: "x",
+        };
+        headers["X-Tags"] = tagMap[opts.type] || "";
+      }
+      if (opts.format === "markdown") headers["X-Markdown"] = "yes";
+      const res = await fetch(rawUrl, { method: "POST", headers, body: opts.body });
+      return {
+        service: "ntfy",
+        success: res.ok,
+        detail: res.ok ? "Sent" : `HTTP ${res.status}: ${await res.text()}`,
+      };
+    }
+
+    // Generic webhook — POST JSON
+    const payload = {
+      title: opts.title || "",
+      body: opts.body,
+      type: opts.type || "info",
+    };
+    const res = await fetch(rawUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return {
+      service: "webhook",
+      success: res.ok,
+      detail: res.ok ? "Sent" : `HTTP ${res.status}: ${await res.text()}`,
+    };
+  } catch (err) {
+    return {
+      service: "webhook",
+      success: false,
+      detail: String(err),
+    };
+  }
+}
+
 export async function sendToService(
   parsed: ParsedService,
   opts: NotifyOptions
